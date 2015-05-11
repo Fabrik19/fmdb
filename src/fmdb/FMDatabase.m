@@ -729,76 +729,76 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
 }
 
 - (FMResultSet *)executeQuery:(NSString *)sql withArgumentsInArray:(NSArray*)arrayArgs orDictionary:(NSDictionary *)dictionaryArgs orVAList:(va_list)args {
-    
+
     if (![self databaseExists]) {
         return 0x00;
     }
-    
+
     if (_isExecutingStatement) {
         [self warnInUse];
         return 0x00;
     }
-    
+
     _isExecutingStatement = YES;
-    
-    int rc                  = 0x00;
-    sqlite3_stmt *pStmt     = 0x00;
-    FMStatement *statement  = 0x00;
-    FMResultSet *rs         = 0x00;
-    
+
+    int rc = 0x00;
+    sqlite3_stmt *pStmt = 0x00;
+    FMStatement *statement = 0x00;
+    FMResultSet *rs = 0x00;
+
     if (_traceExecution && sql) {
         NSLog(@"%@ executeQuery: %@", self, sql);
     }
-    
+
     if (_shouldCacheStatements) {
         statement = [self cachedStatementForQuery:sql];
         pStmt = statement ? [statement statement] : 0x00;
         [statement reset];
     }
-    
+
     if (!pStmt) {
-    
-        rc      = sqlite3_prepare_v2(_db, [sql UTF8String], -1, &pStmt, 0);
-        
+
+        rc = sqlite3_prepare_v2(_db, [sql UTF8String], -1, &pStmt, 0);
+
         if (SQLITE_OK != rc) {
             if (_logsErrors) {
                 NSLog(@"DB Error: %d \"%@\"", [self lastErrorCode], [self lastErrorMessage]);
                 NSLog(@"DB Query: %@", sql);
                 NSLog(@"DB Path: %@", _databasePath);
             }
-            
+
             if (_crashOnErrors) {
                 NSAssert(false, @"DB Error: %d \"%@\"", [self lastErrorCode], [self lastErrorMessage]);
                 abort();
             }
-            
+
             sqlite3_finalize(pStmt);
             _isExecutingStatement = NO;
             return nil;
         }
     }
-    
+
     id obj;
     int idx = 0;
     int queryCount = sqlite3_bind_parameter_count(pStmt); // pointed out by Dominic Yu (thanks!)
-    
+
     // If dictionaryArgs is passed in, that means we are using sqlite's named parameter support
     if (dictionaryArgs) {
-        
+
         for (NSString *dictionaryKey in [dictionaryArgs allKeys]) {
-            
+
             // Prefix the key with a colon.
             NSString *parameterName = [[NSString alloc] initWithFormat:@":%@", dictionaryKey];
 
             if (_traceExecution) {
                 NSLog(@"%@ = %@", parameterName, [dictionaryArgs objectForKey:dictionaryKey]);
             }
-            
+
             // Get the index for the parameter name.
             int namedIdx = sqlite3_bind_parameter_index(pStmt, [parameterName UTF8String]);
-            
+
             FMDBRelease(parameterName);
-            
+
             if (namedIdx > 0) {
                 // Standard binding from here.
                 [self bindObject:[dictionaryArgs objectForKey:dictionaryKey] toColumn:namedIdx inStatement:pStmt];
@@ -811,11 +811,11 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
         }
     }
     else {
-            
+
         while (idx < queryCount) {
-            
-            if (arrayArgs && idx < (int)[arrayArgs count]) {
-                obj = [arrayArgs objectAtIndex:(NSUInteger)idx];
+
+            if (arrayArgs && idx < (int) [arrayArgs count]) {
+                obj = [arrayArgs objectAtIndex:(NSUInteger) idx];
             }
             else if (args) {
                 obj = va_arg(args, id);
@@ -824,53 +824,55 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
                 //We ran out of arguments
                 break;
             }
-            
+
             if (_traceExecution) {
                 if ([obj isKindOfClass:[NSData class]]) {
-                    NSLog(@"data: %ld bytes", (unsigned long)[(NSData*)obj length]);
+                    NSLog(@"data: %ld bytes", (unsigned long) [(NSData *) obj length]);
                 }
                 else {
                     NSLog(@"obj: %@", obj);
                 }
             }
-            
+
             idx++;
-            
+
             [self bindObject:obj toColumn:idx inStatement:pStmt];
         }
     }
-    
+
     if (idx != queryCount) {
         NSLog(@"Error: the bind count is not correct for the # of variables (executeQuery)");
         sqlite3_finalize(pStmt);
         _isExecutingStatement = NO;
         return nil;
     }
-    
+
     FMDBRetain(statement); // to balance the release below
-    
+
     if (!statement) {
         statement = [[FMStatement alloc] init];
         [statement setStatement:pStmt];
-        
+
         if (_shouldCacheStatements && sql) {
             [self setCachedStatement:statement forQuery:sql];
         }
     }
-    
+
     // the statement gets closed in rs's dealloc or [rs close];
     rs = [FMResultSet resultSetWithStatement:statement usingParentDatabase:self];
     [rs setQuery:sql];
-    
+
     NSValue *openResultSet = [NSValue valueWithNonretainedObject:rs];
     [_openResultSets addObject:openResultSet];
-    
+    if (!statement.useCount) {
+        statement.useCount = 0;
+    }
     [statement setUseCount:[statement useCount] + 1];
-    
-    FMDBRelease(statement); 
-    
+
+    FMDBRelease(statement);
+
     _isExecutingStatement = NO;
-    
+
     return rs;
 }
 
